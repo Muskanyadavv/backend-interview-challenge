@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach , vi} from 'vitest';
 import { Database } from '../src/db/database';
 import { TaskService } from '../src/services/taskService';
 import { SyncService } from '../src/services/syncService';
+import axios from 'axios';
+
+vi.mock('axios');
 
 describe('Integration Tests', () => {
   let db: Database;
@@ -12,11 +15,12 @@ describe('Integration Tests', () => {
     db = new Database(':memory:');
     await db.initialize();
     taskService = new TaskService(db);
-    syncService = new SyncService(db, taskService);
+    syncService = new SyncService(db, taskService,'http://fake.api');
   });
 
   afterEach(async () => {
     await db.close();
+      vi.clearAllMocks();
   });
 
   describe('Offline to Online Sync Flow', () => {
@@ -45,6 +49,9 @@ describe('Integration Tests', () => {
       const queueItems = await db.all('SELECT * FROM sync_queue ORDER BY created_at');
       expect(queueItems.length).toBeGreaterThanOrEqual(4); // create, update, create, delete
 
+//Fake online Server
+            (axios.get as any).mockResolvedValue({ status: 200 });
+      (axios.post as any).mockResolvedValue({ data: { processed_items: [] } });
       // Simulate coming online and syncing
       const isOnline = await syncService.checkConnectivity();
       if (isOnline) {
@@ -88,6 +95,23 @@ describe('Integration Tests', () => {
       // Verify retry count increases
       // Verify task remains in pending state
       // Simulate successful retry
+
+        const queueItem = await db.get(
+        'SELECT * FROM sync_queue WHERE task_id = ?',
+        [task.id]
+      );
+
+      const fakeError = new Error('Network error');
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      await syncService.handleSyncError(queueItem, fakeError);
+
+      const updated = await db.get('SELECT * FROM sync_queue WHERE id = ?', [
+        queueItem.id,
+      ]);
+
+      expect(updated.retry_count).toBe(1);
+      expect(updated.error_message).toBe('Network error');
     });
   });
 });

@@ -83,6 +83,13 @@ describe('SyncService', () => {
       expect(result.success).toBe(true);
       expect(result.synced_items).toBe(2);
       expect(result.failed_items).toBe(0);
+
+      const syncedTask = await db.get('SELECT * FROM tasks WHERE id = ?', [task1.id]);
+      expect(syncedTask.sync_status).toBe('synced');
+      expect(syncedTask.server_id).toBe('srv_1');
+
+      const queue = await db.all('SELECT * FROM sync_queue');
+      expect(queue.length).toBe(0); // should be cleared
     });
 
     it('should handle sync failures gracefully', async () => {
@@ -95,6 +102,9 @@ describe('SyncService', () => {
       
       expect(result.success).toBe(false);
       expect(result.failed_items).toBeGreaterThan(0);
+
+         const queue = await db.all('SELECT * FROM sync_queue WHERE task_id = ?', [task.id]);
+      expect(queue.length).toBeGreaterThan(0);
     });
   });
 
@@ -103,6 +113,26 @@ describe('SyncService', () => {
       // This test would verify that when there's a conflict,
       // the task with the more recent updated_at timestamp wins
       // Implementation depends on the actual conflict resolution logic
+
+       const olderServerTask = {
+        id: '1',
+        title: 'Server Version',
+        completed: false,
+        created_at: new Date(),
+        updated_at: new Date(Date.now() - 5000), // 5 seconds older
+        is_deleted: false,
+      };
+
+      const newerLocalTask = {
+        ...olderServerTask,
+        title: 'Local Version',
+        updated_at: new Date(),
+      };
+
+      // @ts-expect-error testing private method
+      const resolved = await syncService.resolveConflict(newerLocalTask, olderServerTask);
+
+      expect(resolved.title).toBe('Local Version');
     });
   });
 });
